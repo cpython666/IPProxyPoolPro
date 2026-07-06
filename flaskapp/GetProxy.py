@@ -1,32 +1,43 @@
-from flask import Flask,jsonify
-from IPProxyPoolPro import config
+from fastapi import FastAPI, HTTPException
 
 from IPProxyPoolPro.db.RedisHelper import RedisHelper
-app = Flask(__name__,static_folder="static",template_folder="templates")
 
-redisHelper = RedisHelper()
 
-@app.route("/")
+app = FastAPI(title='IPProxyPoolPro', version='1.0.0')
+
+
+def get_redis():
+    return RedisHelper()
+
+
+@app.get('/health')
+def health():
+    redis_helper = get_redis()
+    try:
+        count = redis_helper.count()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={'redis': False, 'error': str(exc)},
+        )
+
+    return {'redis': True, 'count': count}
+
+
+@app.get('/')
 def hello():
-    if redisHelper.count()>0:
-        ls=redisHelper.getMax()
-        return ls
-    else:
-        return '数据库暂时没有代理，爬虫板块加班中，稍等一下吧~~~'
+    redis_helper = get_redis()
+    return redis_helper.getMax() if redis_helper.count() > 0 else []
 
-@app.route("/all")
-def all():
-    if redisHelper.count()>0:
-        return jsonify(redisHelper.all())
 
-@app.route("/proxy/<int:num>")
-def proxy(num):
-    if redisHelper.count()>0:
-        ls = redisHelper.getMax()
-        if len(ls):
-            return ls[:num]
-        else:
-            return ls
+@app.get('/all')
+def all_proxies():
+    redis_helper = get_redis()
+    return redis_helper.all()
 
-if __name__=='__main__':
-    app.run(host='0.0.0.0', port=config['API_PORT'], debug=True)
+
+@app.get('/proxy/{num}')
+def proxy(num: int):
+    redis_helper = get_redis()
+    proxies = redis_helper.getMax()
+    return proxies[:max(num, 0)]

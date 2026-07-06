@@ -1,40 +1,49 @@
 from multiprocessing import Process
 
-from time import sleep
-from IPProxyPoolPro.spider.Html2Proxies import Html2Proxies
-from IPProxyPoolPro.db.RedisHelper import RedisHelper
-
-from IPProxyPoolPro.flaskapp.GetProxy import app
 from IPProxyPoolPro import config
 from IPProxyPoolPro.TestIP.TestIP import TestIP
+from IPProxyPoolPro.spider.Html2Proxies import Html2Proxies
 
-testIP=TestIP()
-redis = RedisHelper()
 
 def runTestIP():
-    testIP.randomTest()
+    TestIP().randomTest()
+
 
 def runSpider():
     Html2Proxies.getProxiesList()
-def runFlask():
-    app.run(host='0.0.0.0', port=config.API_PORT, debug=False)
-if __name__=="__main__":
-    p1=Process(target=runSpider)
-    p2=Process(target=runFlask)
-    p1.start()
-    p2.start()
-    p_list=[]
-    for i in range(config.TEST_NUMBER):
-        p=Process(target=runTestIP)
-        p.start()
-        p_list.append(p)
-
-    p1.join()
-    p2.join()
-    for i in p_list:
-        i.join()
 
 
-    # process3=Process(runSpider,args=(redis,))
+def runApi():
+    import uvicorn
 
-    # print('Process Ended')
+    uvicorn.run(
+        'IPProxyPoolPro.flaskapp.GetProxy:app',
+        host=config.API_HOST,
+        port=config.API_PORT,
+        log_level='info',
+    )
+
+
+if __name__ == "__main__":
+    processes = [
+        Process(target=runSpider, name='proxy-spider'),
+        Process(target=runApi, name='proxy-api'),
+    ]
+
+    for index in range(config.TEST_NUMBER):
+        processes.append(Process(target=runTestIP, name=f'proxy-checker-{index + 1}'))
+
+    for process in processes:
+        process.start()
+        print(f'Started process: {process.name} (pid={process.pid})')
+
+    try:
+        for process in processes:
+            process.join()
+    except KeyboardInterrupt:
+        print('Stopping child processes...')
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+        for process in processes:
+            process.join()
