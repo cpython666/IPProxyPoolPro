@@ -1,47 +1,57 @@
-import requests
-
 from IPProxyPoolPro import config
 from IPProxyPoolPro.db.RedisHelper import RedisHelper
+from IPProxyPoolPro.utils.httpClients import get as http_get
 
 
-def checkproxy(proxy):
+def _response_is_valid(response, test_target):
+    if hasattr(response, 'raise_for_status'):
+        response.raise_for_status()
+
+    response_type = test_target.get('response_type', 'text')
+    if response_type == 'ip_json':
+        data = response.json()
+        return any(data.get(key) for key in test_target.get('success_keys', ('origin', 'ip')))
+
+    text = getattr(response, 'text', '')
+    expected_text = test_target.get('expected_text')
+    if expected_text:
+        return expected_text.lower() in text.lower()
+
+    return bool(text)
+
+
+def checkproxy(proxy, request_client=None, test_target=None):
     if not RedisHelper.is_valid_proxy(proxy):
         print(f'代理格式无效: {proxy}')
         return False
 
+    selected_client = config.validate_request_client(request_client)
+    target = test_target or config.get_test_target()
     proxies = {
         'http': f'http://{proxy}',
         'https': f'http://{proxy}',
     }
 
     try:
-        response = requests.get(
-            url=config.TEST_IP,
+        response = http_get(
+            selected_client,
+            url=target['url'],
             headers=config.get_header(),
             proxies=proxies,
             timeout=config.TIMEOUT,
         )
-        response.raise_for_status()
 
-        content_type = response.headers.get('content-type', '')
-        if 'application/json' in content_type:
-            data = response.json()
-            if data.get('origin') or data.get('ip'):
-                print(f'代理可用: {proxy}')
-                return True
-        elif response.text:
-            print(f'代理可用: {proxy}')
+        if _response_is_valid(response, target):
+            print(f"代理可用: {proxy} ({selected_client}, {target['name']})")
             return True
-    except requests.RequestException as exc:
-        print(f'代理不可用: {proxy} ({exc})')
-    except ValueError as exc:
-        print(f'代理响应不是有效 JSON: {proxy} ({exc})')
+    except Exception as exc:
+        print(f"代理不可用: {proxy} ({selected_client}, {target['name']}, {exc})")
 
     return False
 
 
-def doProxy(redis, proxy):
-    if checkproxy(proxy):
+def doProxy(redis, proxy, request_client=None, test_target=None):
+    if checkproxy(proxy, request_client=request_client, test_target=test_target):
         redis.mark_success(proxy)
     else:
         redis.decrease(proxy)

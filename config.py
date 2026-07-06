@@ -6,8 +6,18 @@ patten：可以是正则表达式,可以是xpath语句不过要和上面的相�
 '''
 import os
 import random
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+if load_dotenv is not None:
+    load_dotenv(Path(__file__).resolve().parent / '.env')
 
 TIMEOUT = 5
+FETCH_TIMEOUT = int(os.getenv('IP_PROXY_POOL_FETCH_TIMEOUT', '15'))
 '''
 ip，端口，类型(0高匿名，1透明)，protocol(0 http,1 https),country(国家),area(省市),updatetime(更新时间),speed(连接速度)
 '''
@@ -62,17 +72,80 @@ parserList = [
 # https://www.kuaidaili.com/ops/proxylist/10/
         'urls': ['http://www.kuaidaili.com/proxylist/%s/' % n for n in range(1, 11)],
         'type': 'xpath',
+        'region': 'domestic',
         'pattern': ".//*[@id='freelist']/table/tbody/tr[position()>0]",
         'position': {'ip': './td[1]', 'port': './td[2]', 'type': './td[3]', 'protocol': './td[4]'}
     },
 # https://www.kuaidaili.com/free/inha/1
 # //*[@id="list"]/table
     {
-        'urls': ['http://www.kuaidaili.com/free/%s/%s/' % (m, n) for m in ['inha', 'intr', 'outha', 'outtr'] for n in
+        'urls': ['http://www.kuaidaili.com/free/%s/%s/' % (m, n) for m in ['inha', 'intr'] for n in
                  range(1, 31)],
         'type': 'xpath',
+        'region': 'domestic',
+        'name': 'kuaidaili domestic free',
         'pattern': ".//*[@id='list']/table/tbody/tr[position()>0]",
         'position': {'ip': './td[1]', 'port': './td[2]', 'type': './td[3]', 'protocol': './td[4]'}
+    },
+    {
+        'name': 'Geonode proxy API',
+        'urls': [
+            'https://proxylist.geonode.com/api/proxy-list?limit=500&page=%s&sort_by=lastChecked&sort_type=desc&protocols=http%%2Chttps'
+            % n
+            for n in range(1, 4)
+        ],
+        'type': 'json',
+        'region': 'foreign',
+        'list_path': 'data',
+        'ip_field': 'ip',
+        'port_field': 'port',
+    },
+    {
+        'name': 'TheSpeedX GitHub HTTP list',
+        'urls': ['https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt'],
+        'type': 'regex',
+        'region': 'foreign',
+        'pattern': r'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}(?!\d)',
+    },
+    {
+        'name': 'monosans GitHub HTTP list',
+        'urls': ['https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt'],
+        'type': 'regex',
+        'region': 'foreign',
+        'pattern': r'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}(?!\d)',
+    },
+    {
+        'name': 'jetkai GitHub online HTTP list',
+        'urls': ['https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt'],
+        'type': 'regex',
+        'region': 'foreign',
+        'pattern': r'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}(?!\d)',
+    },
+    {
+        'name': 'Zaeem20 GitHub HTTP list',
+        'urls': ['https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt'],
+        'type': 'regex',
+        'region': 'foreign',
+        'pattern': r'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}(?!\d)',
+    },
+    {
+        'name': 'roosterkid GitHub HTTPS list',
+        'urls': ['https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt'],
+        'type': 'regex',
+        'region': 'foreign',
+        'pattern': r'(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}(?!\d)',
+    },
+    {
+        'name': 'FreeProxy.World',
+        'urls': [
+            'https://www.freeproxy.world/?type=http&anonymity=&country=&speed=&port=&page=%s'
+            % n
+            for n in range(1, 6)
+        ],
+        'type': 'xpath',
+        'region': 'foreign',
+        'pattern': ".//table//tr[td]",
+        'position': {'ip': './td[1]', 'port': './td[2]', 'type': '', 'protocol': ''}
     },
 
     # {
@@ -104,6 +177,88 @@ parserList = [
     #     'position': {'ip': 0, 'port': 1, 'type': -1, 'protocol': 2}
     # }
 ]
+
+SOURCE_REGIONS = ('domestic', 'foreign', 'all')
+DEFAULT_SOURCE_REGION = os.getenv('IP_PROXY_POOL_SOURCE_REGION', 'all').lower()
+
+REQUEST_CLIENTS = ('requests', 'curl_cffi', 'requests_go')
+DEFAULT_REQUEST_CLIENT = os.getenv('IP_PROXY_POOL_REQUEST_CLIENT', 'requests').lower()
+PRECHECK_BEFORE_ADD = os.getenv('IP_PROXY_POOL_PRECHECK_BEFORE_ADD', '1').lower() not in (
+    '0',
+    'false',
+    'no',
+    'off',
+)
+
+TEST_SITES = {
+    'httpbin': {
+        'url': 'https://httpbin.org/ip',
+        'response_type': 'ip_json',
+        'success_keys': ('origin', 'ip'),
+    },
+    'ipify': {
+        'url': 'https://api.ipify.org?format=json',
+        'response_type': 'ip_json',
+        'success_keys': ('ip',),
+    },
+    'hyperdash': {
+        'url': 'https://hyperdash.com/',
+        'response_type': 'text',
+        'expected_text': 'Hyperdash',
+    },
+}
+DEFAULT_TEST_SITE = os.getenv('IP_PROXY_POOL_TEST_SITE', 'httpbin').lower()
+DEFAULT_TEST_URL = os.getenv('IP_PROXY_POOL_TEST_URL', '').strip()
+
+
+def get_parser_list(region=None):
+    """Return parser configs filtered by source region."""
+    selected_region = (region or DEFAULT_SOURCE_REGION or 'all').lower()
+    if selected_region not in SOURCE_REGIONS:
+        raise ValueError(f'unsupported source region: {selected_region}')
+
+    if selected_region == 'all':
+        return parserList
+
+    return [
+        parser
+        for parser in parserList
+        if parser.get('region', 'all') == selected_region
+    ]
+
+
+def validate_request_client(client=None):
+    selected_client = (client or DEFAULT_REQUEST_CLIENT or 'requests').lower()
+    if selected_client not in REQUEST_CLIENTS:
+        raise ValueError(f'unsupported request client: {selected_client}')
+
+    return selected_client
+
+
+def get_test_target(site=None, url=None):
+    """Return the configured proxy validation target."""
+    selected_url = (url or DEFAULT_TEST_URL or '').strip()
+    if selected_url:
+        return {
+            'name': 'custom',
+            'url': selected_url,
+            'response_type': 'text',
+        }
+
+    selected_site = (site or DEFAULT_TEST_SITE or 'httpbin').lower()
+    if selected_site.startswith(('http://', 'https://')):
+        return {
+            'name': 'custom',
+            'url': selected_site,
+            'response_type': 'text',
+        }
+
+    if selected_site not in TEST_SITES:
+        raise ValueError(f'unsupported test site: {selected_site}')
+
+    target = TEST_SITES[selected_site].copy()
+    target['name'] = selected_site
+    return target
 
 USER_AGENTS = [
     "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; AcooBrowser; .NET CLR 1.1.4322; .NET CLR 2.0.50727)",
@@ -161,34 +316,25 @@ TEST_HTTP_HEADER = 'http://httpbin.org/get'
 TEST_HTTPS_HEADER = 'https://httpbin.org/get'
 
 
+def _env_optional(name, default=None):
+    value = os.getenv(name)
+    if value is None or value == '':
+        return default
+
+    return value
+
 
 
 DB_CONFIG = {
 # OTHER DATABASES
 
-    'DB_CONNECT_TYPE': 'redis',
+    'DB_CONNECT_TYPE': os.getenv('IP_PROXY_POOL_DB_CONNECT_TYPE', 'redis'),
     'redis':{
-        # 'HOST': '121.41.***.***',
-        # 'PORT': 6379,
-        # 'DB': 1,
-        # 'PASSWORD': None,
-        # 'REDIS_KEY': 'proxies'
-
-        'HOST': 'localhost',
-        'PORT': 6379,
-        'DB': 1,
-        'PASSWORD': None,
-        'REDIS_KEY': 'proxies'
-
-        # 39.101.74.109:18821
-
-        # 'HOST': '39.101.74.***',
-        # 'PORT': 6379,
-        # # 'PORT': 18821,
-        # 'DB': 1,
-        # 'PASSWORD': '***',
-        # 'REDIS_KEY': 'proxies'
-
+        'HOST': os.getenv('IP_PROXY_POOL_REDIS_HOST', 'localhost'),
+        'PORT': int(os.getenv('IP_PROXY_POOL_REDIS_PORT', '6379')),
+        'DB': int(os.getenv('IP_PROXY_POOL_REDIS_DB', '1')),
+        'PASSWORD': _env_optional('IP_PROXY_POOL_REDIS_PASSWORD'),
+        'REDIS_KEY': os.getenv('IP_PROXY_POOL_REDIS_KEY', 'proxies')
     }
 
 }

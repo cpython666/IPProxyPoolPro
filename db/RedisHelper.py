@@ -55,6 +55,12 @@ class RedisHelper(object):
 
         return self.r.zadd(self.redis_key, {proxy: score or self.default_score})
 
+    def exists(self, proxy):
+        if not self.is_valid_proxy(proxy):
+            return False
+
+        return self.r.zscore(self.redis_key, proxy) is not None
+
     def mark_success(self, proxy):
         if not self.is_valid_proxy(proxy):
             return 0

@@ -1,17 +1,30 @@
-import chardet
 import requests
 
 from IPProxyPoolPro import config
 
+try:
+    import chardet
+except ImportError:
+    chardet = None
+
 
 class Html_Downloader(object):
+    session = requests.Session()
+    session.trust_env = False
+
     @staticmethod
     def download(url):
         try:
-            response = requests.get(url=url, headers=config.get_header(), timeout=config.TIMEOUT)
+            response = Html_Downloader.session.get(
+                url=url,
+                headers=config.get_header(),
+                timeout=config.FETCH_TIMEOUT,
+            )
             response.raise_for_status()
 
-            detected_encoding = chardet.detect(response.content).get('encoding')
+            detected_encoding = None
+            if chardet is not None:
+                detected_encoding = chardet.detect(response.content).get('encoding')
             if detected_encoding:
                 response.encoding = detected_encoding
 
