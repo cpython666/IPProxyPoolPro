@@ -1,45 +1,47 @@
-from IPProxyPoolPro.spider.HtmlDownLoader import Html_Downloader
+from time import sleep
 
-from IPProxyPoolPro.spider.HtmlPraser import HtmlPraser
 from IPProxyPoolPro import config
 from IPProxyPoolPro.db.RedisHelper import RedisHelper
-from time import sleep
+from IPProxyPoolPro.spider.HtmlDownLoader import Html_Downloader
+from IPProxyPoolPro.spider.HtmlPraser import HtmlPraser
+
 
 class Html2Proxies(object):
     @staticmethod
-    def getProxiesList():
-
-        '''
-        遍历解析器
-        :param redis: 接受一个redishelper对象用来实时存储代理
-        :return: 无返回值
-        '''
+    def getProxiesList(clear_on_start=False):
+        """Fetch proxies from configured sources and store them in Redis."""
         redis = RedisHelper()
-        # 每次运行项目先清理掉之前项目运行的代理
-        redis.clear()
+        if clear_on_start:
+            redis.clear()
 
         while True:
             for parser in config.parserList:
                 for url in parser['urls']:
-                    response=Html_Downloader.download(url)
-                    if response and parser['type']=='xpath':
-                        proxies=HtmlPraser.XpathPraser(response,parser)
-                        for proxy in proxies:
-                            redis.add(proxy)
+                    count = redis.count()
+                    if count >= config.MAX_PROXY_NUMBER:
+                        print(f'代理数量 {count} 已达到上限 {config.MAX_PROXY_NUMBER}，暂停抓取')
+                        sleep(config.CHECK_TIME)
+                        continue
 
-                        print(f'此{url}共有{len(proxies)}条代理存储完毕~,目前共计{redis.count()}条代理')
-                    else:
-                        print(f'此{url}页面爬取解析失败~')
+                    response = Html_Downloader.download(url)
+                    if not response or parser['type'] != 'xpath':
+                        print(f'页面抓取或解析配置不可用: {url}')
+                        continue
 
-                    while True:
-                        count=redis.count()
-                        if count >=config.MAX_PROXY_NUMBER:
-                            print(f'目前代理{count}已达到所设置存储上限，停止爬取。。。。。。')
-                            sleep(30)
-                        else:
-                            break
-            print('数据已爬取完毕')
-            # break
+                    proxies = HtmlPraser.XpathPraser(response, parser)
+                    added = 0
+                    for proxy in proxies:
+                        added += redis.add(proxy)
 
-if __name__ =="__main__":
-    print(Html2Proxies.getProxiesList())
+                    print(
+                        f'完成 {url}: 解析 {len(proxies)} 条，新增 {added} 条，当前共 {redis.count()} 条'
+                    )
+
+                    sleep(1)
+
+            print(f'本轮抓取完成，{config.CHECK_TIME} 秒后开始下一轮')
+            sleep(config.CHECK_TIME)
+
+
+if __name__ == "__main__":
+    Html2Proxies.getProxiesList()

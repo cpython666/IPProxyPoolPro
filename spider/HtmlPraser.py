@@ -1,23 +1,32 @@
 from lxml import etree
 
+
 class HtmlPraser(object):
+    @staticmethod
+    def _first_text(node, xpath):
+        values = node.xpath(xpath)
+        if not values:
+            return ''
+
+        value = values[0]
+        if isinstance(value, str):
+            return value.strip()
+
+        return ''.join(value.itertext()).strip()
 
     @staticmethod
-    def XpathPraser(response,parser):
-        '''
-        此方法接受网页text源代码，
-        xpath方法提取代理
-        返回代理列表
-        '''
+    def XpathPraser(response, parser):
+        """Parse proxy rows with the historical parser config format."""
         proxylist = []
         root = etree.HTML(response)
+        if root is None:
+            return proxylist
+
         proxys = root.xpath(parser['pattern'])
         for proxy in proxys:
-            try:
-                ip = proxy.xpath(parser['position']['ip'])[0].text
-                port = proxy.xpath(parser['position']['port'])[0].text
-            except Exception as e:
-                continue
-            proxy = ip+':'+port
-            proxylist.append(proxy)
+            ip = HtmlPraser._first_text(proxy, parser['position']['ip'])
+            port = HtmlPraser._first_text(proxy, parser['position']['port'])
+            if ip and port:
+                proxylist.append(f'{ip}:{port}')
+
         return proxylist
