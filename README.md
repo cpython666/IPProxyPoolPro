@@ -1,45 +1,96 @@
-自建优质爬虫代理池
-# 程序说明：
+# IPProxyPoolPro
 
-项目运行后，
+一个轻量级爬虫代理池项目：抓取免费代理，存入 Redis，后台定时检测可用性，并通过 FastAPI 提供查询接口。
 
-一个进程去爬取网页代理存入redis，
+## 功能
 
-四个进程去随即检测redis中的代理，进行评分（数量可修改，评分规则可修改）
+- 抓取 `config.py` 中配置的代理源。
+- 使用 Redis sorted set 存储代理和评分。
+- 定时随机检测代理可用性，成功置为满分，失败按步长扣分，扣到 0 后删除。
+- 提供 HTTP API 查询满分代理和全部代理。
 
-一个进程运行flask框架，提供接口
+## 环境要求
 
-# 评分规则说明
+- Python 3.10+
+- Redis 服务
 
-## 初始规则
+推荐使用本机已有的 conda 爬虫环境：
 
-入库初试分数为50，检测时连接成功直接为100，失败每次减30，分数小于0从数据库中删除，
+```bash
+conda activate journal_scrapy
+python run.py
+```
+
+如果使用新的 Python 环境，先安装依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+启动 Redis 后运行：
+
+```bash
+python run.py
+```
+
+默认 API 监听 `0.0.0.0:8000`。
+
+FastAPI 文档地址：
+
+- `http://localhost:8000/docs`
+- `http://localhost:8000/redoc`
+
+## 配置
+
+主要配置在 `config.py`：
+
+- `DB_CONFIG`: Redis 地址、端口、库和 key。
+- `parserList`: 代理源和 XPath 解析规则。
+- `TEST_IP`: 代理检测使用的 IP 回显接口，默认 `https://httpbin.org/ip`。
+- `MAX_PROXY_NUMBER`: Redis 中最多保留的代理数量。
+- `CHECK_TIME`: 抓取轮次和检测轮次的等待间隔。
+- `TEST_NUMBER`: 代理检测进程数。
+
+也可以用环境变量覆盖部分配置：
+
+```bash
+set IP_PROXY_POOL_API_PORT=8000
+set IP_PROXY_POOL_TEST_WORKERS=3
+python run.py
+```
+
+## API
+
+- `GET /health`: 服务健康检查，返回 Redis 状态和代理数量。
+- `GET /`: 返回所有满分代理。
+- `GET /proxy/<num>`: 返回前 `num` 个满分代理。
+- `GET /all`: 返回全部代理及分数。
+
+示例：
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/proxy/10
+curl http://localhost:8000/all
+```
+
+## 评分规则
+
+- 新抓取代理初始分：`DEFAULT_SCORE = 50`
+- 检测成功：置为 `MAX_SCORE = 100`
+- 检测失败：扣 `DECREASE_STEP = 30`
+- 分数小于等于 0：从 Redis 删除
+
+## 说明
+
+免费代理源经常变动，`parserList` 中的 XPath 可能会随着目标网站改版而失效。若抓取不到代理，优先检查目标网站是否仍可访问，以及表格结构是否与配置一致。
+
+本项目早期实现参考了 [qiyeboy/IPProxyPool](https://github.com/qiyeboy/IPProxyPool)。
 
 
+代理来源：
 
-# 接口说明
+https://www.zdaye.com/free/
 
-获取前n个100分代理：
+https://francevpn.github.io/free-proxy/page-3.htm
 
-![image-20230316012244552](README.assets/image-20230316012244552.png)
-
-
-
-![image-20230316012143736](README.assets/image-20230316012143736.png)
-
-
-
-获取所有满分代理：`http://localhost:8000/`
-
-![image-20230316012549303](README.assets/image-20230316012549303.png)
-
-获取所有代理：`http://localhost:8000/all`
-
-![image-20230316012331903](README.assets/image-20230316012331903.png)
-
-# 借鉴说明
-
-## 项目借鉴于[https://github.com/qiyeboy/IPProxyPool](https://github.com/qiyeboy/IPProxyPool)
-
-## 免费代理服务
-几百页海外代理：https://francevpn.github.io/free-proxy/page-3.htm 
