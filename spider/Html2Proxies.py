@@ -18,14 +18,15 @@ class Html2Proxies(object):
         precheck_before_add=None,
     ):
         """Fetch proxies from configured sources and store them in Redis."""
-        redis = RedisHelper()
+        test_target = config.get_test_target(test_site, test_url)
+        pool_domain = test_target['domain']
+        redis = RedisHelper(domain=pool_domain)
         if clear_on_start:
             redis.clear()
 
         parsers = config.get_parser_list(region)
         region_name = region or config.DEFAULT_SOURCE_REGION
         selected_client = config.validate_request_client(request_client)
-        test_target = config.get_test_target(test_site, test_url)
         precheck_enabled = (
             config.PRECHECK_BEFORE_ADD
             if precheck_before_add is None
@@ -33,7 +34,8 @@ class Html2Proxies(object):
         )
         print(
             f"代理采集进程已启动，采集范围: {region_name}，来源数: {len(parsers)}，"
-            f"入库前预测试: {precheck_enabled}，请求客户端: {selected_client}，测试站点: {test_target['name']}"
+            f"入库前预测试: {precheck_enabled}，请求客户端: {selected_client}，"
+            f"测试站点: {test_target['name']}，代理池: {redis.redis_key}"
         )
 
         while True:
