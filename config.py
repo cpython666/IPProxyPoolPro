@@ -206,6 +206,11 @@ TEST_SITES = {
         'response_type': 'text',
         'expected_text': 'Hyperdash',
     },
+    'baidu': {
+        'url': 'https://www.baidu.com/',
+        'response_type': 'text',
+        'expected_text': 'baidu',
+    },
 }
 DEFAULT_TEST_SITE = os.getenv('IP_PROXY_POOL_TEST_SITE', 'httpbin').lower()
 DEFAULT_TEST_URL = os.getenv('IP_PROXY_POOL_TEST_URL', '').strip()
@@ -239,11 +244,13 @@ def get_test_target(site=None, url=None):
     """Return the configured proxy validation target."""
     selected_url = (url or DEFAULT_TEST_URL or '').strip()
     if selected_url:
-        return {
+        target = {
             'name': 'custom',
             'url': selected_url,
             'response_type': 'text',
         }
+        target['domain'] = registrable_domain(selected_url)
+        return target
 
     selected_site = (site or DEFAULT_TEST_SITE or 'httpbin').lower()
     if selected_site.startswith(('http://', 'https://')):
@@ -251,6 +258,7 @@ def get_test_target(site=None, url=None):
             'name': 'custom',
             'url': selected_site,
             'response_type': 'text',
+            'domain': registrable_domain(selected_site),
         }
 
     if selected_site not in TEST_SITES:
@@ -258,7 +266,103 @@ def get_test_target(site=None, url=None):
 
     target = TEST_SITES[selected_site].copy()
     target['name'] = selected_site
+    target['domain'] = registrable_domain(target['url'])
     return target
+
+
+def get_test_targets(sites=None, urls=None):
+    """Return one target per requested test site/URL, deduped by pool domain.
+
+    ``sites``/``urls`` may be a comma-separated string or a list. This is what
+    lets a single ``run.py`` populate several per-domain pools at once, e.g.
+    ``--test-site httpbin,baidu``. Falls back to the single configured target
+    when nothing is supplied.
+    """
+    def _split(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(',') if part.strip()]
+        return [part for part in value if part]
+
+    url_items = _split(urls) or _split(DEFAULT_TEST_URL)
+    site_items = _split(sites) or _split(DEFAULT_TEST_SITE)
+
+    targets = []
+    seen_domains = set()
+
+    def _add(target):
+        if target['domain'] not in seen_domains:
+            seen_domains.add(target['domain'])
+            targets.append(target)
+
+    for url in url_items:
+        _add(get_test_target(url=url))
+    for site in site_items:
+        _add(get_test_target(site=site))
+
+    if not targets:
+        _add(get_test_target())
+
+    return targets
+
+
+# Compound (two-level) public suffixes. Without these, ``baidu.com.cn`` would
+# collapse to ``com.cn``. We keep the registrable label in front, so
+# ``www.baidu.com.cn`` -> ``baidu.com.cn``. Not exhaustive; extend as needed.
+TWO_LEVEL_SUFFIXES = frozenset({
+    'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn', 'ac.cn',
+    'co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'me.uk',
+    'co.jp', 'or.jp', 'ne.jp', 'ac.jp',
+    'com.hk', 'org.hk', 'com.tw', 'org.tw',
+    'com.au', 'net.au', 'org.au',
+    'co.nz', 'co.kr', 'com.br', 'com.sg', 'co.in', 'com.mx',
+})
+
+
+def registrable_domain(host_or_url):
+    """Return the registrable domain used to key a proxy pool.
+
+    Subdomains collapse (``www.baidu.com`` -> ``baidu.com``) while different
+    TLDs stay distinct (``foo.com`` vs ``foo.cn``). IP hosts and single-label
+    hosts are returned as-is. Falls back to the raw input if it cannot be
+    parsed, so a pool is always derivable.
+    """
+    if not host_or_url:
+        return 'default'
+
+    host = host_or_url.strip().lower()
+    if '://' in host:
+        host = host.split('://', 1)[1]
+    # strip path / query / fragment / userinfo / port
+    host = host.split('/', 1)[0].split('?', 1)[0].split('#', 1)[0]
+    host = host.rsplit('@', 1)[-1]
+    host = host.split(':', 1)[0].strip('.')
+    if not host:
+        return 'default'
+
+    # IPv4/IPv6 literal -> use verbatim (no TLD concept)
+    try:
+        import ipaddress
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+
+    labels = host.split('.')
+    if len(labels) <= 2:
+        return host
+
+    last_two = '.'.join(labels[-2:])
+    if last_two in TWO_LEVEL_SUFFIXES:
+        return '.'.join(labels[-3:])
+    return last_two
+
+
+def redis_key_for_domain(domain):
+    """Build the Redis sorted-set key for a given registrable domain."""
+    prefix = DB_CONFIG['redis']['REDIS_KEY']
+    return f'{prefix}:{domain}'
 
 USER_AGENTS = [
     "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; AcooBrowser; .NET CLR 1.1.4322; .NET CLR 2.0.50727)",
@@ -332,7 +436,7 @@ DB_CONFIG = {
     'redis':{
         'HOST': os.getenv('IP_PROXY_POOL_REDIS_HOST', 'localhost'),
         'PORT': int(os.getenv('IP_PROXY_POOL_REDIS_PORT', '6379')),
-        'DB': int(os.getenv('IP_PROXY_POOL_REDIS_DB', '1')),
+        'DB': int(os.getenv('IP_PROXY_POOL_REDIS_DB', '0')),
         'PASSWORD': _env_optional('IP_PROXY_POOL_REDIS_PASSWORD'),
         'REDIS_KEY': os.getenv('IP_PROXY_POOL_REDIS_KEY', 'proxies')
     }

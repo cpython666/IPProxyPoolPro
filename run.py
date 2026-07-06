@@ -39,12 +39,13 @@ def parse_args():
     parser.add_argument(
         '--test-site',
         default=config.DEFAULT_TEST_SITE,
-        help='proxy validation site: httpbin, ipify, hyperdash, or a URL',
+        help='proxy validation site(s), comma-separated: httpbin,baidu,... '
+             'each distinct domain gets its own pool',
     )
     parser.add_argument(
         '--test-url',
         default=config.DEFAULT_TEST_URL,
-        help='custom proxy validation URL; overrides --test-site',
+        help='custom proxy validation URL(s), comma-separated; overrides --test-site',
     )
     parser.add_argument(
         '--precheck-before-add',
@@ -54,7 +55,8 @@ def parse_args():
     )
     args = parser.parse_args()
     config.validate_request_client(args.request_client)
-    config.get_test_target(args.test_site, args.test_url)
+    # Resolve now so an unsupported site/URL fails fast before spawning workers.
+    args.test_targets = config.get_test_targets(args.test_site, args.test_url)
     return args
 
 
@@ -69,31 +71,53 @@ def runApi():
     )
 
 
+def _target_args(target):
+    """Map a resolved target back to (test_site, test_url) for a worker.
+
+    Named sites (httpbin, baidu, ...) are passed by name so the worker keeps
+    their response validation (e.g. expected_text); custom targets pass by URL.
+    """
+    if target['name'] == 'custom':
+        return None, target['url']
+    return target['name'], None
+
+
 if __name__ == "__main__":
     args = parse_args()
-    processes = [
-        Process(
-            target=runSpider,
-            args=(
-                args.region,
-                args.request_client,
-                args.test_site,
-                args.test_url,
-                args.precheck_before_add,
-            ),
-            name=f'proxy-spider-{args.region}',
-        ),
-        Process(target=runApi, name='proxy-api'),
-    ]
+    targets = args.test_targets
+    print(
+        'Test domains -> pools: '
+        + ', '.join(f"{t['name']}={t['domain']}" for t in targets)
+    )
 
-    for index in range(config.TEST_NUMBER):
+    processes = [Process(target=runApi, name='proxy-api')]
+
+    # One spider + TEST_NUMBER checkers per test domain, each bound to that
+    # domain's pool. Distinct domains never share a pool.
+    for target in targets:
+        site, url = _target_args(target)
+        domain = target['domain']
         processes.append(
             Process(
-                target=runTestIP,
-                args=(args.request_client, args.test_site, args.test_url),
-                name=f'proxy-checker-{index + 1}',
+                target=runSpider,
+                args=(
+                    args.region,
+                    args.request_client,
+                    site,
+                    url,
+                    args.precheck_before_add,
+                ),
+                name=f'proxy-spider-{domain}',
             )
         )
+        for index in range(config.TEST_NUMBER):
+            processes.append(
+                Process(
+                    target=runTestIP,
+                    args=(args.request_client, site, url),
+                    name=f'proxy-checker-{domain}-{index + 1}',
+                )
+            )
 
     for process in processes:
         process.start()

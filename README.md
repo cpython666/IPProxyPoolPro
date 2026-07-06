@@ -51,6 +51,18 @@ python run.py --test-url https://example.com/
 python run.py --region foreign --request-client curl_cffi --test-site hyperdash
 ```
 
+**按测试域名分池**：代理按“用哪个域名测通的”分开存储，Redis key 形如
+`proxies:<一级域名>`（如 `proxies:baidu.com`、`proxies:httpbin.org`）。一级域名区分
+到可注册域，所以 `foo.com` 和 `foo.cn` 会分开，但 `www.baidu.com` 与 `baidu.com`
+归为同一池。`--test-site` / `--test-url` 支持逗号分隔的多个目标，每个不同域名各自
+起一个采集进程 + `TEST_NUMBER` 个检测进程，写入各自的池：
+
+```bash
+# 同时用 baidu 和 httpbin 两个域名检测，写入 proxies:baidu.com 和 proxies:httpbin.org
+python run.py --test-site baidu,httpbin
+python run.py --test-url https://a.com/,https://b.cn/
+```
+
 默认会在代理入库前先请求测试站点，测试通过才写入 Redis。若只想先快速入库再交给后台检测，可以关闭预测试：
 
 ```bash
@@ -77,14 +89,15 @@ FastAPI 文档地址：
 
 - `DB_CONFIG`: Redis 连接配置，可通过环境变量覆盖地址、端口、库、密码和 key。
 - `parserList`: 代理源和解析规则，支持 `xpath`、`regex`、`json`，可用 `region` 标记 `domestic`、`foreign` 或 `all`。
-- `TEST_SITES`: 代理检测可选测试站点，内置 `httpbin`、`ipify`、`hyperdash`，默认 `httpbin`。
+- `TEST_SITES`: 代理检测可选测试站点，内置 `httpbin`、`ipify`、`hyperdash`、`baidu`，默认 `httpbin`。
 - `DEFAULT_TEST_URL`: 可通过环境变量 `IP_PROXY_POOL_TEST_URL` 设置自定义代理检测 URL。
 - `FETCH_TIMEOUT`: 代理源页面/API 抓取超时，默认 15 秒。
 - `REQUEST_CLIENTS`: 代理检测可选请求客户端，支持 `requests`、`curl_cffi`、`requests_go`。
 - `PRECHECK_BEFORE_ADD`: 是否在代理入库前先预测试，默认开启。
-- `MAX_PROXY_NUMBER`: Redis 中最多保留的代理数量。
+- `MAX_PROXY_NUMBER`: 每个域名池最多保留的代理数量。
 - `CHECK_TIME`: 抓取轮次和检测轮次的等待间隔。
-- `TEST_NUMBER`: 代理检测进程数。
+- `TEST_NUMBER`: 每个测试域名的代理检测进程数。
+- `IP_PROXY_POOL_REDIS_KEY`: 池 key 前缀，实际池为 `<前缀>:<一级域名>`，默认前缀 `proxies`。
 
 配置项可以写在 `.env` 里，也可以直接用系统环境变量覆盖：
 
@@ -93,15 +106,31 @@ FastAPI 文档地址：
 - `IP_PROXY_POOL_DB_CONNECT_TYPE`: 数据库类型，默认 `redis`
 - `IP_PROXY_POOL_REDIS_HOST`: Redis 地址，默认 `localhost`
 - `IP_PROXY_POOL_REDIS_PORT`: Redis 端口，默认 `6379`
-- `IP_PROXY_POOL_REDIS_DB`: Redis DB，默认 `1`
+- `IP_PROXY_POOL_REDIS_DB`: Redis DB，默认 `0`
 - `IP_PROXY_POOL_REDIS_PASSWORD`: Redis 密码，默认空
 - `IP_PROXY_POOL_REDIS_KEY`: Redis sorted set key，默认 `proxies`
 - `IP_PROXY_POOL_SOURCE_REGION`: 采集范围，`domestic`、`foreign` 或 `all`
 - `IP_PROXY_POOL_FETCH_TIMEOUT`: 代理源抓取超时，默认 `15`
 - `IP_PROXY_POOL_PRECHECK_BEFORE_ADD`: 是否入库前预测试，默认 `1`
 - `IP_PROXY_POOL_REQUEST_CLIENT`: 检测客户端，`requests`、`curl_cffi` 或 `requests_go`
-- `IP_PROXY_POOL_TEST_SITE`: 检测站点，`httpbin`、`ipify` 或 `hyperdash`
-- `IP_PROXY_POOL_TEST_URL`: 自定义检测 URL，设置后覆盖 `IP_PROXY_POOL_TEST_SITE`
+- `IP_PROXY_POOL_TEST_SITE`: 检测站点，支持逗号分隔多个（如 `httpbin,baidu`），每个不同域名一个池
+- `IP_PROXY_POOL_TEST_URL`: 自定义检测 URL，支持逗号分隔多个，设置后覆盖 `IP_PROXY_POOL_TEST_SITE`
+
+## 按测试域名分池
+
+代理**按检测所用的测试域名分开存储**。每个测试域名对应一个独立的 Redis sorted set：
+`<前缀>:<一级域名>`，例如 `proxies:baidu.com`、`proxies:httpbin.org`。
+
+- 分池依据是**一级（可注册）域名**：`www.baidu.com` 与 `image.baidu.com` 归入同一池 `baidu.com`；
+  而 `foo.com` 与 `foo.cn` 是不同池，`baidu.com.cn` 这类二级后缀也能正确识别。
+- 每个池独立评分、独立 `MAX_PROXY_NUMBER` 上限。一个代理在 `baidu.com` 池满分，不代表它在
+  `httpbin.org` 池也可用——因为它们是用不同域名分别检测的。
+- 用逗号指定多个测试域名时，`run.py` 会为每个域名各起一个采集进程 + `TEST_NUMBER` 个检测进程，
+  分别写入各自的池：
+
+```bash
+python run.py --test-site httpbin,baidu
+```
 
 `curl_cffi` 对应 Python 包 `curl_cffi.requests`；`requests_go` 对应 Python 包 `requests-go`/`requests_go`。这两个客户端是可选依赖，不指定时默认只需要 `requests`。
 
@@ -113,17 +142,48 @@ pip install curl_cffi requests-go
 
 ## API
 
-- `GET /health`: 服务健康检查，返回 Redis 状态和代理数量。
-- `GET /`: 返回所有满分代理。
-- `GET /proxy/<num>`: 返回前 `num` 个满分代理。
-- `GET /all`: 返回全部代理及分数。
+多池说明：`/`、`/all`、`/proxy/<num>`、`/stats` 默认**跨所有域名池聚合**，
+也可加 `?domain=baidu.com` 只看某个池（会自动归一到一级域名）。
+
+- `GET /health`: 服务健康检查，返回 Redis 状态、代理总数和池数量。
+- `GET /domains`: 列出各测试域名池及其总数、满分数量。
+- `GET /`: 返回所有满分代理（可选 `?domain=`）。
+- `GET /proxy/<num>`: 返回前 `num` 个满分代理（可选 `?domain=`）。
+- `GET /all`: 返回全部代理及分数（可选 `?domain=`）。
+- `GET /stats`: 返回代理总数、满分（可用）数量、各分数的数量分布、各池明细，以及评分规则（可选 `?domain=`）。
+- `GET /test`: 用指定代理请求测试链接并返回响应。查询参数：
+  - `proxy`（必填）：`ip:port`
+  - `url`（选填）：测试链接，默认使用配置的测试站点
+  - `client`（选填）：请求客户端 `requests` / `curl_cffi` / `requests_go`，默认全局配置
+  - `timeout`（选填）：超时秒数，默认 `TIMEOUT`
+  - 返回 `ok`、`status_code`、`latency_ms`、`body`（截断）、`error`
 
 示例：
 
 ```bash
 curl http://localhost:8000/health
+curl http://localhost:8000/domains
 curl http://localhost:8000/proxy/10
+curl 'http://localhost:8000/proxy/10?domain=baidu.com'
 curl http://localhost:8000/all
+curl http://localhost:8000/stats
+curl 'http://localhost:8000/stats?domain=httpbin.org'
+curl 'http://localhost:8000/test?proxy=1.2.3.4:8080&url=https://httpbin.org/ip'
+```
+
+`GET /stats` 返回示例（跨池聚合，`pools` 给出每个域名池的明细）：
+
+```json
+{
+  "total": 128,
+  "full": 42,
+  "distribution": {"100": 42, "70": 31, "50": 25, "40": 18, "20": 8, "10": 4},
+  "pools": {
+    "httpbin.org": {"total": 80, "full": 30},
+    "baidu.com": {"total": 48, "full": 12}
+  },
+  "score_rule": {"max": 100, "default": 50, "decrease_step": 30}
+}
 ```
 
 ## 评分规则
@@ -132,6 +192,11 @@ curl http://localhost:8000/all
 - 检测成功：置为 `MAX_SCORE = 100`
 - 检测失败：扣 `DECREASE_STEP = 30`
 - 分数小于等于 0：从 Redis 删除
+
+## 数据持久化与重启
+
+代理数据保存在 Redis（默认 `db0`），**重启不会清空历史数据**。重新运行 `python run.py`
+后会重连 Redis，在已有数据基础上继续抓取和检测，只有分数扣到 0 的代理才会被删除。
 
 ## 说明
 
