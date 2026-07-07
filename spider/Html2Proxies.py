@@ -1,5 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import math
 from time import sleep
+
+from lxml import etree
 
 from IPProxyPoolPro import config
 from IPProxyPoolPro.db.RedisHelper import RedisHelper
@@ -10,6 +14,13 @@ from IPProxyPoolPro.utils.checkProxies import checkproxy
 
 class Html2Proxies(object):
     @staticmethod
+    def _parse_and_cache_source(redis, parser, url, response):
+        proxies = HtmlPraser.parse(response, parser)
+        redis.set_source_proxies_cache(url, proxies)
+
+        return proxies
+
+    @staticmethod
     def _load_source_proxies(redis, parser, url):
         cached_proxies = redis.get_source_proxies_cache(url)
         if cached_proxies is not None:
@@ -19,25 +30,125 @@ class Html2Proxies(object):
         if not response:
             return None, False
 
-        proxies = HtmlPraser.parse(response, parser)
-        redis.set_source_proxies_cache(url, proxies)
+        proxies = Html2Proxies._parse_and_cache_source(redis, parser, url, response)
 
         return proxies, False
 
     @staticmethod
+    def _limit_page_count(page_count):
+        configured_limit = getattr(config, 'SOURCE_DYNAMIC_MAX_PAGES', 0)
+        if configured_limit > 0:
+            return min(page_count, configured_limit)
+
+        return page_count
+
+    @staticmethod
+    def _html_max_page(response, pagination):
+        root = etree.HTML(response)
+        if root is None:
+            return 1
+
+        page_xpath = pagination.get('page_xpath')
+        if not page_xpath:
+            return 1
+
+        pages = []
+        for item in root.xpath(page_xpath):
+            if isinstance(item, str):
+                text = item.strip()
+            else:
+                text = ''.join(item.itertext()).strip()
+            if text.isdigit():
+                pages.append(int(text))
+        return max(pages) if pages else 1
+
+    @staticmethod
+    def _json_total_pages(response, pagination):
+        try:
+            data = json.loads(response)
+        except (TypeError, ValueError):
+            return 1
+
+        try:
+            total = int(data.get(pagination.get('total_field', 'total'), 0))
+            limit = int(data.get(pagination.get('limit_field', 'limit'), 0))
+        except (TypeError, ValueError):
+            return 1
+
+        if total <= 0 or limit <= 0:
+            return 1
+
+        return int(math.ceil(total / float(limit)))
+
+    @staticmethod
+    def _discover_parser_urls(redis, parser):
+        urls = list(parser.get('urls', []))
+        pagination = parser.get('pagination')
+        if not pagination or not urls:
+            return urls, {}
+
+        first_url = pagination.get('first_url') or urls[0]
+        response = Html_Downloader.download(first_url)
+        if not response:
+            print(f'dynamic pagination discovery failed: {parser.get("name", first_url)}')
+            return urls, {}
+
+        prefetched = {
+            first_url: Html2Proxies._parse_and_cache_source(
+                redis,
+                parser,
+                first_url,
+                response,
+            )
+        }
+        pagination_type = pagination.get('type')
+        if pagination_type == 'html_max_page':
+            page_count = Html2Proxies._html_max_page(response, pagination)
+        elif pagination_type == 'json_total':
+            page_count = Html2Proxies._json_total_pages(response, pagination)
+        else:
+            page_count = 1
+
+        page_count = Html2Proxies._limit_page_count(max(1, page_count))
+        url_template = pagination.get('url_template')
+        if not url_template or page_count <= 1:
+            return [first_url], prefetched
+
+        expanded_urls = [
+            url_template.format(page=page)
+            for page in range(1, page_count + 1)
+        ]
+        expanded_urls[0] = first_url
+        source_name = parser.get('name', first_url)
+        print(f'dynamic pagination discovered: {source_name}, pages={page_count}')
+
+        return expanded_urls, prefetched
+
+    @staticmethod
     def _download_parser_urls(redis, parser, fetch_workers):
-        urls = parser['urls']
-        if fetch_workers <= 1 or len(urls) <= 1:
-            for url in urls:
-                proxies, cached = Html2Proxies._load_source_proxies(redis, parser, url)
+        urls, prefetched = Html2Proxies._discover_parser_urls(redis, parser)
+        remaining_urls = []
+        for url in urls:
+            if url in prefetched:
+                yield url, prefetched[url], False
+            else:
+                remaining_urls.append(url)
+
+        if fetch_workers <= 1 or len(remaining_urls) <= 1:
+            for url in remaining_urls:
+                proxies, cached = Html2Proxies._load_source_proxies(
+                    redis,
+                    parser,
+                    url,
+                )
                 yield url, proxies, cached
             return
 
-        worker_count = min(fetch_workers, len(urls))
+        worker_count = min(fetch_workers, len(remaining_urls))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = {
                 executor.submit(Html2Proxies._load_source_proxies, redis, parser, url): url
-                for url in urls
+                for url in remaining_urls
             }
             for future in as_completed(futures):
                 url = futures[future]

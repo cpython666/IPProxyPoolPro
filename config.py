@@ -40,6 +40,10 @@ SOURCE_URL_CACHE_SECONDS = max(
     0,
     int(os.getenv('IP_PROXY_POOL_SOURCE_URL_CACHE_SECONDS', '14400')),
 )
+SOURCE_DYNAMIC_MAX_PAGES = max(
+    0,
+    int(os.getenv('IP_PROXY_POOL_SOURCE_DYNAMIC_MAX_PAGES', '0')),
+)
 PRECHECK_CONCURRENCY = max(1, int(os.getenv('IP_PROXY_POOL_PRECHECK_CONCURRENCY', '20')))
 PRECHECK_CACHED_SOURCE_PROXIES = os.getenv(
     'IP_PROXY_POOL_PRECHECK_CACHED_SOURCE_PROXIES',
@@ -100,6 +104,11 @@ parserList = [
     {
         'name': 'kuaidaili private domestic free',
         'urls': ['https://www.kuaidaili.com/free/'],
+        'pagination': {
+            'type': 'html_max_page',
+            'url_template': 'https://www.kuaidaili.com/free/inha/{page}/',
+            'page_xpath': "//*[@id='listnav']//a/text() | //*[contains(@class, 'pagination')]//a/text()",
+        },
         'type': 'xpath',
         'region': 'domestic',
         'pattern': ".//*[@id='list']//table//tr[td]",
@@ -113,6 +122,11 @@ parserList = [
     {
         'name': 'kuaidaili foreign free',
         'urls': ['https://www.kuaidaili.com/free/fps/'],
+        'pagination': {
+            'type': 'html_max_page',
+            'url_template': 'https://www.kuaidaili.com/free/fps/{page}/',
+            'page_xpath': "//*[@id='listnav']//a/text() | //*[contains(@class, 'pagination')]//a/text()",
+        },
         'type': 'xpath',
         'region': 'foreign',
         'pattern': ".//*[@id='list']//table//tr[td]",
@@ -126,10 +140,14 @@ parserList = [
     {
         'name': 'Geonode proxy API',
         'urls': [
-            'https://proxylist.geonode.com/api/proxy-list?limit=500&page=%s&sort_by=lastChecked&sort_type=desc&protocols=http%%2Chttps'
-            % n
-            for n in range(1, 4)
+            'https://proxylist.geonode.com/api/proxy-list?limit=500&page=1&sort_by=lastChecked&sort_type=desc&protocols=http%2Chttps'
         ],
+        'pagination': {
+            'type': 'json_total',
+            'url_template': 'https://proxylist.geonode.com/api/proxy-list?limit=500&page={page}&sort_by=lastChecked&sort_type=desc&protocols=http%2Chttps',
+            'total_field': 'total',
+            'limit_field': 'limit',
+        },
         'type': 'json',
         'region': 'foreign',
         'list_path': 'data',
@@ -174,10 +192,13 @@ parserList = [
     {
         'name': 'FreeProxy.World',
         'urls': [
-            'https://www.freeproxy.world/?type=http&anonymity=&country=&speed=&port=&page=%s'
-            % n
-            for n in range(1, 6)
+            'https://www.freeproxy.world/?type=http&anonymity=&country=&speed=&port=&page=1'
         ],
+        'pagination': {
+            'type': 'html_max_page',
+            'url_template': 'https://www.freeproxy.world/?type=http&anonymity=&country=&speed=&port=&page={page}',
+            'page_xpath': "//*[contains(@class, 'pagination')]//a/text()",
+        },
         'type': 'xpath',
         'region': 'foreign',
         'pattern': ".//table//tr[td]",
