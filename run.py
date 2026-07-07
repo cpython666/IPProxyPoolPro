@@ -7,23 +7,46 @@ from IPProxyPoolPro import config
 def runTestIP(request_client, test_site, test_url):
     from IPProxyPoolPro.TestIP.TestIP import TestIP
 
-    TestIP(request_client=request_client, test_site=test_site, test_url=test_url).randomTest()
+    try:
+        TestIP(request_client=request_client, test_site=test_site, test_url=test_url).randomTest()
+    except KeyboardInterrupt:
+        print('代理检测进程已停止')
 
 
-def runSpider(region, request_client, test_site, test_url, precheck_before_add):
+def runSpider(
+    region,
+    request_client,
+    test_site,
+    test_url,
+    precheck_before_add,
+    fetch_workers,
+    precheck_workers,
+):
     from IPProxyPoolPro.spider.Html2Proxies import Html2Proxies
 
-    Html2Proxies.getProxiesList(
-        region=region,
-        request_client=request_client,
-        test_site=test_site,
-        test_url=test_url,
-        precheck_before_add=precheck_before_add,
-    )
+    try:
+        Html2Proxies.getProxiesList(
+            region=region,
+            request_client=request_client,
+            test_site=test_site,
+            test_url=test_url,
+            precheck_before_add=precheck_before_add,
+            fetch_workers=fetch_workers,
+            precheck_workers=precheck_workers,
+        )
+    except KeyboardInterrupt:
+        print('代理采集进程已停止')
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Start IPProxyPoolPro services.')
+    parser.add_argument(
+        'command',
+        nargs='?',
+        choices=('web', 'spider', 'test', 'all'),
+        default='all',
+        help='service to run: web, spider, test, or all (default: all)',
+    )
     parser.add_argument(
         '--region',
         choices=config.SOURCE_REGIONS,
@@ -53,10 +76,37 @@ def parse_args():
         default=config.PRECHECK_BEFORE_ADD,
         help='test proxies before adding them to Redis',
     )
+    parser.add_argument(
+        '--fetch-workers',
+        type=int,
+        default=config.FETCH_CONCURRENCY,
+        help='concurrent source-page fetch workers used by spider',
+    )
+    parser.add_argument(
+        '--precheck-workers',
+        type=int,
+        default=config.PRECHECK_CONCURRENCY,
+        help='concurrent precheck workers used before adding proxies',
+    )
+    parser.add_argument(
+        '--test-workers',
+        type=int,
+        default=config.TEST_NUMBER,
+        help='proxy checker worker processes per test domain',
+    )
     args = parser.parse_args()
     config.validate_request_client(args.request_client)
-    # Resolve now so an unsupported site/URL fails fast before spawning workers.
-    args.test_targets = config.get_test_targets(args.test_site, args.test_url)
+    if args.fetch_workers < 1:
+        parser.error('--fetch-workers must be >= 1')
+    if args.precheck_workers < 1:
+        parser.error('--precheck-workers must be >= 1')
+    if args.test_workers < 1:
+        parser.error('--test-workers must be >= 1')
+    if args.command in ('spider', 'test', 'all'):
+        # Resolve now so an unsupported site/URL fails fast before spawning workers.
+        args.test_targets = config.get_test_targets(args.test_site, args.test_url)
+    else:
+        args.test_targets = []
     return args
 
 
@@ -82,43 +132,7 @@ def _target_args(target):
     return target['name'], None
 
 
-if __name__ == "__main__":
-    args = parse_args()
-    targets = args.test_targets
-    print(
-        'Test domains -> pools: '
-        + ', '.join(f"{t['name']}={t['domain']}" for t in targets)
-    )
-
-    processes = [Process(target=runApi, name='proxy-api')]
-
-    # One spider + TEST_NUMBER checkers per test domain, each bound to that
-    # domain's pool. Distinct domains never share a pool.
-    for target in targets:
-        site, url = _target_args(target)
-        domain = target['domain']
-        processes.append(
-            Process(
-                target=runSpider,
-                args=(
-                    args.region,
-                    args.request_client,
-                    site,
-                    url,
-                    args.precheck_before_add,
-                ),
-                name=f'proxy-spider-{domain}',
-            )
-        )
-        for index in range(config.TEST_NUMBER):
-            processes.append(
-                Process(
-                    target=runTestIP,
-                    args=(args.request_client, site, url),
-                    name=f'proxy-checker-{domain}-{index + 1}',
-                )
-            )
-
+def _start_processes(processes):
     for process in processes:
         process.start()
         print(f'Started process: {process.name} (pid={process.pid})')
@@ -133,3 +147,55 @@ if __name__ == "__main__":
                 process.terminate()
         for process in processes:
             process.join()
+
+
+def _build_processes(args):
+    processes = []
+    if args.command in ('web', 'all'):
+        processes.append(Process(target=runApi, name='proxy-api'))
+
+    # One spider/checker group per test domain, each bound to that domain's pool.
+    for target in args.test_targets:
+        site, url = _target_args(target)
+        domain = target['domain']
+        if args.command in ('spider', 'all'):
+            processes.append(
+                Process(
+                    target=runSpider,
+                    args=(
+                        args.region,
+                        args.request_client,
+                        site,
+                        url,
+                        args.precheck_before_add,
+                        args.fetch_workers,
+                        args.precheck_workers,
+                    ),
+                    name=f'proxy-spider-{domain}',
+                )
+            )
+        if args.command in ('test', 'all'):
+            for index in range(args.test_workers):
+                processes.append(
+                    Process(
+                        target=runTestIP,
+                        args=(args.request_client, site, url),
+                        name=f'proxy-checker-{domain}-{index + 1}',
+                    )
+                )
+
+    return processes
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    if args.test_targets:
+        print(
+            'Test domains -> pools: '
+            + ', '.join(f"{t['name']}={t['domain']}" for t in args.test_targets)
+        )
+
+    if args.command == 'web':
+        runApi()
+    else:
+        _start_processes(_build_processes(args))

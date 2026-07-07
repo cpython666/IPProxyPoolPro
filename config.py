@@ -18,6 +18,20 @@ if load_dotenv is not None:
 
 TIMEOUT = 5
 FETCH_TIMEOUT = int(os.getenv('IP_PROXY_POOL_FETCH_TIMEOUT', '15'))
+FETCH_CONCURRENCY = max(1, int(os.getenv('IP_PROXY_POOL_FETCH_CONCURRENCY', '5')))
+SOURCE_URL_CACHE_SECONDS = max(
+    0,
+    int(os.getenv('IP_PROXY_POOL_SOURCE_URL_CACHE_SECONDS', '14400')),
+)
+PRECHECK_CONCURRENCY = max(1, int(os.getenv('IP_PROXY_POOL_PRECHECK_CONCURRENCY', '20')))
+PRECHECK_CACHED_SOURCE_PROXIES = os.getenv(
+    'IP_PROXY_POOL_PRECHECK_CACHED_SOURCE_PROXIES',
+    '1',
+).lower() not in ('0', 'false', 'no', 'off')
+PRECHECK_FAIL_CACHE_SECONDS = max(
+    0,
+    int(os.getenv('IP_PROXY_POOL_PRECHECK_FAIL_CACHE_SECONDS', '14400')),
+)
 '''
 ip，端口，类型(0高匿名，1透明)，protocol(0 http,1 https),country(国家),area(省市),updatetime(更新时间),speed(连接速度)
 '''
@@ -66,26 +80,31 @@ parserList = [
     #     'position': {'ip': './td[1]', 'port': './td[2]', 'type': '', 'protocol': ''}
     #
     # },
-    # https://www.kuaidaili.com/proxylist/1
-    # //*[@id="freelist"]/table
     {
-# https://www.kuaidaili.com/ops/proxylist/10/
-        'urls': ['http://www.kuaidaili.com/proxylist/%s/' % n for n in range(1, 11)],
+        'name': 'kuaidaili private domestic free',
+        'urls': ['https://www.kuaidaili.com/free/'],
         'type': 'xpath',
         'region': 'domestic',
-        'pattern': ".//*[@id='freelist']/table/tbody/tr[position()>0]",
-        'position': {'ip': './td[1]', 'port': './td[2]', 'type': './td[3]', 'protocol': './td[4]'}
+        'pattern': ".//*[@id='list']//table//tr[td]",
+        'position': {
+            'ip': "./td[@data-title='IP' or @data-title='ip'] | ./td[1]",
+            'port': "./td[@data-title='PORT' or @data-title='port'] | ./td[2]",
+            'type': './td[4]',
+            'protocol': './td[4]',
+        }
     },
-# https://www.kuaidaili.com/free/inha/1
-# //*[@id="list"]/table
     {
-        'urls': ['http://www.kuaidaili.com/free/%s/%s/' % (m, n) for m in ['inha', 'intr'] for n in
-                 range(1, 31)],
+        'name': 'kuaidaili foreign free',
+        'urls': ['https://www.kuaidaili.com/free/fps/'],
         'type': 'xpath',
-        'region': 'domestic',
-        'name': 'kuaidaili domestic free',
-        'pattern': ".//*[@id='list']/table/tbody/tr[position()>0]",
-        'position': {'ip': './td[1]', 'port': './td[2]', 'type': './td[3]', 'protocol': './td[4]'}
+        'region': 'foreign',
+        'pattern': ".//*[@id='list']//table//tr[td]",
+        'position': {
+            'ip': "./td[@data-title='IP' or @data-title='ip'] | ./td[1]",
+            'port': "./td[@data-title='PORT' or @data-title='port'] | ./td[2]",
+            'type': './td[3]',
+            'protocol': './td[3]',
+        }
     },
     {
         'name': 'Geonode proxy API',
@@ -364,6 +383,13 @@ def redis_key_for_domain(domain):
     prefix = DB_CONFIG['redis']['REDIS_KEY']
     return f'{prefix}:{domain}'
 
+MODERN_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+]
+
 USER_AGENTS = [
     "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1; AcooBrowser; .NET CLR 1.1.4322; .NET CLR 2.0.50727)",
     "Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0; Acoo Browser; SLCC1; .NET CLR 2.0.50727; Media Center PC 5.0; .NET CLR 3.0.04506)",
@@ -403,11 +429,12 @@ USER_AGENTS = [
 
 def get_header():
     return {
-        'User-Agent': random.choice(USER_AGENTS),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+        'User-Agent': random.choice(MODERN_USER_AGENTS),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'Connection': 'keep-alive',
         'Accept-Encoding': 'gzip, deflate',
+        'Upgrade-Insecure-Requests': '1',
     }
 
 TEST_URL = 'http://ip.chinaz.com/getip.aspx'
@@ -462,4 +489,4 @@ CHECK_TIME=30
 API_HOST = '0.0.0.0'
 API_PORT = int(os.getenv('IP_PROXY_POOL_API_PORT', '8000'))
 
-TEST_NUMBER = int(os.getenv('IP_PROXY_POOL_TEST_WORKERS', '3'))
+TEST_NUMBER = int(os.getenv('IP_PROXY_POOL_TEST_WORKERS', '1'))

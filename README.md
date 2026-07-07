@@ -33,12 +33,29 @@ pip install -r requirements.txt
 python run.py
 ```
 
+`run.py` 支持拆分启动，也可以继续一键启动：
+
+```bash
+# 一键启动 Web 服务、代理采集、代理检测
+python run.py
+python run.py all
+
+# 只启动 Web API
+python run.py web
+
+# 只采集代理
+python run.py spider
+
+# 只检测 Redis 中已有代理
+python run.py test
+```
+
 只采集国内、国外或全部代理源：
 
 ```bash
-python run.py --region domestic
-python run.py --region foreign
-python run.py --region all
+python run.py spider --region domestic
+python run.py spider --region foreign
+python run.py spider --region all
 ```
 
 指定代理检测使用的请求客户端和测试站点：
@@ -49,6 +66,30 @@ python run.py --request-client curl_cffi --test-site hyperdash
 python run.py --request-client requests_go --test-site ipify
 python run.py --test-url https://example.com/
 python run.py --region foreign --request-client curl_cffi --test-site hyperdash
+```
+
+采集代理源页面时默认并发数为 `5`，可以按网络情况调整：
+
+```bash
+python run.py spider --fetch-workers 10
+```
+
+入库前预测试代理默认并发数为 `20`，可以按测试站点和网络情况调整：
+
+```bash
+python run.py spider --precheck-workers 20
+```
+
+代理列表页的解析结果会缓存 4 小时，重启后同一个列表 URL 不会马上重复请求目标站，而是直接复用历史解析出的代理列表：
+
+```bash
+IP_PROXY_POOL_SOURCE_URL_CACHE_SECONDS=14400
+```
+
+缓存命中的历史代理默认仍会走入库前预测试；如果想直接入池、交给后台检测，可以关闭：
+
+```bash
+IP_PROXY_POOL_PRECHECK_CACHED_SOURCE_PROXIES=0
 ```
 
 **按测试域名分池**：代理按“用哪个域名测通的”分开存储，Redis key 形如
@@ -67,6 +108,12 @@ python run.py --test-url https://a.com/,https://b.cn/
 
 ```bash
 python run.py --no-precheck-before-add
+```
+
+预测试失败的代理会写入 Redis 失败缓存，默认 4 小时内再次采集到会直接跳过，避免重启后反复等待同一批坏代理超时：
+
+```bash
+IP_PROXY_POOL_PRECHECK_FAIL_CACHE_SECONDS=14400
 ```
 
 也可以复制 `.env.example` 为本地 `.env`，用环境变量指定默认采集范围、Redis、检测客户端和测试站点：
@@ -92,17 +139,21 @@ FastAPI 文档地址：
 - `TEST_SITES`: 代理检测可选测试站点，内置 `httpbin`、`ipify`、`hyperdash`、`baidu`，默认 `httpbin`。
 - `DEFAULT_TEST_URL`: 可通过环境变量 `IP_PROXY_POOL_TEST_URL` 设置自定义代理检测 URL。
 - `FETCH_TIMEOUT`: 代理源页面/API 抓取超时，默认 15 秒。
+- `SOURCE_URL_CACHE_SECONDS`: 代理列表页解析结果缓存时间，默认 `14400` 秒，设置为 `0` 可关闭缓存。
 - `REQUEST_CLIENTS`: 代理检测可选请求客户端，支持 `requests`、`curl_cffi`、`requests_go`。
 - `PRECHECK_BEFORE_ADD`: 是否在代理入库前先预测试，默认开启。
+- `PRECHECK_CONCURRENCY`: 入库前预测试并发数，默认 `20`。
+- `PRECHECK_CACHED_SOURCE_PROXIES`: 是否预测试从历史解析缓存取出的代理，默认开启。
+- `PRECHECK_FAIL_CACHE_SECONDS`: 预测试失败缓存时间，默认 `14400` 秒，设置为 `0` 可关闭缓存。
 - `MAX_PROXY_NUMBER`: 每个域名池最多保留的代理数量。
 - `CHECK_TIME`: 抓取轮次和检测轮次的等待间隔。
-- `TEST_NUMBER`: 每个测试域名的代理检测进程数。
+- `TEST_NUMBER`: 每个测试域名的代理检测进程数，默认 `1`，可通过 `IP_PROXY_POOL_TEST_WORKERS` 配置。
 - `IP_PROXY_POOL_REDIS_KEY`: 池 key 前缀，实际池为 `<前缀>:<一级域名>`，默认前缀 `proxies`。
 
 配置项可以写在 `.env` 里，也可以直接用系统环境变量覆盖：
 
 - `IP_PROXY_POOL_API_PORT`: API 端口，默认 `8000`
-- `IP_PROXY_POOL_TEST_WORKERS`: 代理检测进程数，默认 `3`
+- `IP_PROXY_POOL_TEST_WORKERS`: 代理检测进程数，默认 `1`
 - `IP_PROXY_POOL_DB_CONNECT_TYPE`: 数据库类型，默认 `redis`
 - `IP_PROXY_POOL_REDIS_HOST`: Redis 地址，默认 `localhost`
 - `IP_PROXY_POOL_REDIS_PORT`: Redis 端口，默认 `6379`
@@ -111,7 +162,12 @@ FastAPI 文档地址：
 - `IP_PROXY_POOL_REDIS_KEY`: Redis sorted set key，默认 `proxies`
 - `IP_PROXY_POOL_SOURCE_REGION`: 采集范围，`domestic`、`foreign` 或 `all`
 - `IP_PROXY_POOL_FETCH_TIMEOUT`: 代理源抓取超时，默认 `15`
+- `IP_PROXY_POOL_FETCH_CONCURRENCY`: 代理源页面抓取并发数，默认 `5`
+- `IP_PROXY_POOL_SOURCE_URL_CACHE_SECONDS`: 代理列表页解析结果缓存秒数，默认 `14400`
 - `IP_PROXY_POOL_PRECHECK_BEFORE_ADD`: 是否入库前预测试，默认 `1`
+- `IP_PROXY_POOL_PRECHECK_CONCURRENCY`: 入库前预测试并发数，默认 `20`
+- `IP_PROXY_POOL_PRECHECK_CACHED_SOURCE_PROXIES`: 是否预测试历史解析缓存里的代理，默认 `1`
+- `IP_PROXY_POOL_PRECHECK_FAIL_CACHE_SECONDS`: 预测试失败缓存秒数，默认 `14400`
 - `IP_PROXY_POOL_REQUEST_CLIENT`: 检测客户端，`requests`、`curl_cffi` 或 `requests_go`
 - `IP_PROXY_POOL_TEST_SITE`: 检测站点，支持逗号分隔多个（如 `httpbin,baidu`），每个不同域名一个池
 - `IP_PROXY_POOL_TEST_URL`: 自定义检测 URL，支持逗号分隔多个，设置后覆盖 `IP_PROXY_POOL_TEST_SITE`
@@ -211,11 +267,11 @@ curl 'http://localhost:8000/test?proxy=1.2.3.4:8080&url=https://httpbin.org/ip'
 
 国内来源：
 
-- 快代理代理列表页：`https://www.kuaidaili.com/proxylist/`
-- 快代理国内免费代理页：`https://www.kuaidaili.com/free/inha/`、`https://www.kuaidaili.com/free/intr/`
+- 快代理国内免费私密代理页：`https://www.kuaidaili.com/free/`
 
 国外来源：
 
+- 快代理海外免费代理页：`https://www.kuaidaili.com/free/fps/`
 - Geonode Free Proxy List：`https://geonode.com/free-proxy-list/`
 - TheSpeedX/PROXY-List：`https://github.com/TheSpeedX/PROXY-List`
 - monosans/proxy-list：`https://github.com/monosans/proxy-list`

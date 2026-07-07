@@ -1,3 +1,5 @@
+import threading
+
 import requests
 
 from IPProxyPoolPro import config
@@ -9,13 +11,22 @@ except ImportError:
 
 
 class Html_Downloader(object):
-    session = requests.Session()
-    session.trust_env = False
+    _thread_local = threading.local()
+
+    @staticmethod
+    def _session():
+        session = getattr(Html_Downloader._thread_local, 'session', None)
+        if session is None:
+            session = requests.Session()
+            session.trust_env = False
+            Html_Downloader._thread_local.session = session
+
+        return session
 
     @staticmethod
     def download(url):
         try:
-            response = Html_Downloader.session.get(
+            response = Html_Downloader._session().get(
                 url=url,
                 headers=config.get_header(),
                 timeout=config.FETCH_TIMEOUT,
@@ -30,6 +41,9 @@ class Html_Downloader(object):
 
             if len(response.content) < 200:
                 raise ValueError('response content is too short')
+
+            if 'kuaidaili.com' in url and '#list' not in response.text and '<table' not in response.text:
+                raise ValueError('site returned an anti-bot or non-list page')
 
             return response.text
         except requests.RequestException as exc:

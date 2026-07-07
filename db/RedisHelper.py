@@ -1,4 +1,7 @@
 import ipaddress
+import hashlib
+import json
+import time
 
 import redis
 
@@ -20,6 +23,9 @@ class RedisHelper(object):
         self.redis_key = (
             config.redis_key_for_domain(domain) if domain else self.key_prefix
         )
+        cache_domain = domain or 'default'
+        self.precheck_fail_key = f'{self.key_prefix}_precheck_fail:{cache_domain}'
+        self.source_proxies_prefix = f'{self.key_prefix}_source_proxies'
 
         self.pool = redis.ConnectionPool(
             host=self.host,
@@ -67,6 +73,90 @@ class RedisHelper(object):
             return False
 
         return self.r.zscore(self.redis_key, proxy) is not None
+
+    def precheck_failed_recently(self, proxy, now=None):
+        if not self.is_valid_proxy(proxy):
+            return False
+
+        current_time = now or time.time()
+        expires_at = self.r.zscore(self.precheck_fail_key, proxy)
+        if expires_at is None:
+            return False
+        if expires_at <= current_time:
+            self.r.zrem(self.precheck_fail_key, proxy)
+            return False
+
+        return True
+
+    def mark_precheck_failed(self, proxy, ttl=None, now=None):
+        if not self.is_valid_proxy(proxy):
+            return 0
+
+        cache_seconds = (
+            config.PRECHECK_FAIL_CACHE_SECONDS if ttl is None else int(ttl)
+        )
+        if cache_seconds <= 0:
+            return 0
+
+        expires_at = (now or time.time()) + cache_seconds
+        result = self.r.zadd(self.precheck_fail_key, {proxy: expires_at})
+        self.r.expire(self.precheck_fail_key, cache_seconds * 2)
+        return result
+
+    def clear_precheck_failed(self, proxy):
+        return self.r.zrem(self.precheck_fail_key, proxy)
+
+    def prune_precheck_fail_cache(self, now=None):
+        return self.r.zremrangebyscore(
+            self.precheck_fail_key,
+            0,
+            now or time.time(),
+        )
+
+    def _source_proxies_key(self, url):
+        digest = hashlib.sha1(url.encode('utf-8')).hexdigest()
+        return f'{self.source_proxies_prefix}:{digest}'
+
+    def get_source_proxies_cache(self, url):
+        if config.SOURCE_URL_CACHE_SECONDS <= 0:
+            return None
+
+        cached = self.r.get(self._source_proxies_key(url))
+        if cached is None:
+            return None
+
+        try:
+            proxies = json.loads(cached)
+        except (TypeError, ValueError):
+            self.r.delete(self._source_proxies_key(url))
+            return None
+
+        if not isinstance(proxies, list):
+            return None
+
+        return [
+            proxy
+            for proxy in proxies
+            if isinstance(proxy, str) and self.is_valid_proxy(proxy)
+        ]
+
+    def set_source_proxies_cache(self, url, proxies, ttl=None):
+        cache_seconds = (
+            config.SOURCE_URL_CACHE_SECONDS if ttl is None else int(ttl)
+        )
+        if cache_seconds <= 0:
+            return False
+
+        clean_proxies = [
+            proxy
+            for proxy in proxies
+            if isinstance(proxy, str) and self.is_valid_proxy(proxy)
+        ]
+        return self.r.setex(
+            self._source_proxies_key(url),
+            cache_seconds,
+            json.dumps(clean_proxies),
+        )
 
     def mark_success(self, proxy):
         if not self.is_valid_proxy(proxy):

@@ -1,4 +1,3 @@
-import random
 from time import sleep
 
 from IPProxyPoolPro import config
@@ -23,8 +22,8 @@ class TestIP(object):
                 sleep(2)
                 continue
 
-            sample_size = min(10, len(proxy_list))
-            for proxy, _score in random.sample(proxy_list, sample_size):
+            print(f'开始检测代理池 {self.redisHelper.redis_key}，本轮共 {len(proxy_list)} 个代理')
+            for proxy, _score in proxy_list:
                 doProxy(
                     self.redisHelper,
                     proxy,
@@ -32,4 +31,5 @@ class TestIP(object):
                     test_target=self.test_target,
                 )
 
+            print(f'本轮检测完成，{config.CHECK_TIME} 秒后开始下一轮')
             sleep(config.CHECK_TIME)
