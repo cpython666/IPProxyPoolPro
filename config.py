@@ -9,12 +9,29 @@ import random
 from pathlib import Path
 
 try:
-    from dotenv import load_dotenv
+    from dotenv import dotenv_values
 except ImportError:
-    load_dotenv = None
+    dotenv_values = None
 
-if load_dotenv is not None:
-    load_dotenv(Path(__file__).resolve().parent / '.env')
+
+def _load_env_files():
+    """Load .env.example first, then .env, without overriding real env vars."""
+    if dotenv_values is None:
+        return
+
+    base_dir = Path(__file__).resolve().parent
+    original_env_keys = set(os.environ)
+
+    for key, value in dotenv_values(base_dir / '.env.example').items():
+        if value is not None and key not in os.environ:
+            os.environ[key] = value
+
+    for key, value in dotenv_values(base_dir / '.env').items():
+        if value is not None and key not in original_env_keys:
+            os.environ[key] = value
+
+
+_load_env_files()
 
 TIMEOUT = 5
 FETCH_TIMEOUT = int(os.getenv('IP_PROXY_POOL_FETCH_TIMEOUT', '15'))
@@ -479,7 +496,7 @@ DEFAULT_SORE = DEFAULT_SCORE
 # 成功直接为100，每次失败减
 MAX_SCORE = 100
 ADD_STEP = MAX_SCORE
-DECREASE_STEP = 30
+DECREASE_STEP = max(1, int(os.getenv('IP_PROXY_POOL_DECREASE_STEP', '30')))
 
 # 代理存储最大数量
 MAX_PROXY_NUMBER=8000

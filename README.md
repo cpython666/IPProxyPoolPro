@@ -6,7 +6,7 @@
 
 - 抓取 `config.py` 中配置的代理源。
 - 使用 Redis sorted set 存储代理和评分。
-- 定时随机检测代理可用性，成功置为满分，失败按步长扣分，扣到 0 后删除。
+- 定时全量检测代理可用性，成功置为满分，失败按步长扣分，扣到 0 后删除。
 - 提供 HTTP API 查询满分代理和全部代理。
 
 ## 环境要求
@@ -123,6 +123,8 @@ copy .env.example .env
 python run.py
 ```
 
+环境加载优先级为：系统环境变量 > `.env` > `.env.example` > 代码默认值。
+
 默认 API 监听 `0.0.0.0:8000`。
 
 FastAPI 文档地址：
@@ -148,6 +150,7 @@ FastAPI 文档地址：
 - `MAX_PROXY_NUMBER`: 每个域名池最多保留的代理数量。
 - `CHECK_TIME`: 抓取轮次和检测轮次的等待间隔。
 - `TEST_NUMBER`: 每个测试域名的代理检测进程数，默认 `1`，可通过 `IP_PROXY_POOL_TEST_WORKERS` 配置。
+- `DECREASE_STEP`: 每次检测失败扣分，默认 `30`，可通过 `IP_PROXY_POOL_DECREASE_STEP` 配置。
 - `IP_PROXY_POOL_REDIS_KEY`: 池 key 前缀，实际池为 `<前缀>:<一级域名>`，默认前缀 `proxies`。
 
 配置项可以写在 `.env` 里，也可以直接用系统环境变量覆盖：
@@ -171,6 +174,7 @@ FastAPI 文档地址：
 - `IP_PROXY_POOL_REQUEST_CLIENT`: 检测客户端，`requests`、`curl_cffi` 或 `requests_go`
 - `IP_PROXY_POOL_TEST_SITE`: 检测站点，支持逗号分隔多个（如 `httpbin,baidu`），每个不同域名一个池
 - `IP_PROXY_POOL_TEST_URL`: 自定义检测 URL，支持逗号分隔多个，设置后覆盖 `IP_PROXY_POOL_TEST_SITE`
+- `IP_PROXY_POOL_DECREASE_STEP`: 每次检测失败扣分，默认 `30`
 
 ## 按测试域名分池
 
@@ -246,7 +250,7 @@ curl 'http://localhost:8000/test?proxy=1.2.3.4:8080&url=https://httpbin.org/ip'
 
 - 新抓取代理初始分：`DEFAULT_SCORE = 50`
 - 检测成功：置为 `MAX_SCORE = 100`
-- 检测失败：扣 `DECREASE_STEP = 30`
+- 检测失败：扣 `DECREASE_STEP`，默认 `30`，可通过 `IP_PROXY_POOL_DECREASE_STEP` 配置
 - 分数小于等于 0：从 Redis 删除
 
 ## 数据持久化与重启
