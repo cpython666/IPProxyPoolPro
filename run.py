@@ -114,7 +114,7 @@ def runApi():
     import uvicorn
 
     uvicorn.run(
-        'IPProxyPoolPro.flaskapp.GetProxy:app',
+        'IPProxyPoolPro.api.GetProxy:app',
         host=config.API_HOST,
         port=config.API_PORT,
         log_level='info',

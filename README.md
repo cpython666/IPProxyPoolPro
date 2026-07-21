@@ -271,11 +271,10 @@ curl 'http://localhost:8000/test?proxy=1.2.3.4:8080&url=https://httpbin.org/ip'
 
 国内来源：
 
-- 快代理国内免费私密代理页：`https://www.kuaidaili.com/free/`
+- 当前未默认启用国内来源。
 
 国外来源：
 
-- 快代理海外免费代理页：`https://www.kuaidaili.com/free/fps/`
 - Geonode Free Proxy List：`https://geonode.com/free-proxy-list/`
 - TheSpeedX/PROXY-List：`https://github.com/TheSpeedX/PROXY-List`
 - monosans/proxy-list：`https://github.com/monosans/proxy-list`
