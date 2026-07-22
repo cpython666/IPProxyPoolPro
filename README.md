@@ -1,5 +1,10 @@
 # IPProxyPoolPro
 
+> [!IMPORTANT]
+> 本项目的进化版 **IPProxyPoolMax** 已在私有仓库 [cpython666/IPProxyPoolMax](https://github.com/cpython666/IPProxyPoolMax) 持续更新，包含最新版源码与更多增强功能。
+>
+> 如需获取最新版源码，请前往 [会员页面](https://cpython666.github.io/vip/) 购买 **至尊会员**，购买后即可申请私有仓库访问权限。
+
 一个轻量级爬虫代理池项目：抓取免费代理，存入 Redis，后台定时检测可用性，并通过 FastAPI 提供查询接口。
 
 ## 功能
